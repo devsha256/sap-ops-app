@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:sap="http://www.mulesoft.org/schema/mule/sap"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/sap http://www.mulesoft.org/schema/mule/sap/current/mule-sap.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+	<!-- Main Generic RFC Execution Flow -->
+	<flow name="execute-generic-rfc-flow"
+		doc:name="Execute Generic RFC Flow">
+
+		<http:listener config-ref="HTTP_Listener_Config"
+			path="/api/sap/rfc/execute" doc:name="HTTP POST /execute"
+			allowedMethods="POST">
+			<http:response
+				statusCode="#[vars.httpStatus default 200]">
+				<http:headers>#[vars.responseHeaders default {}]</http:headers>
+			</http:response>
+		</http:listener>
+
+		<!-- Log Incoming Request -->
+		<logger level="INFO" doc:name="Log Request"
+			message="#['========================================\nIncoming RFC Request\n========================================\nFunction: ' ++ payload.functionName ++ '\n========================================']" />
+
+		<!-- Store Request Variables -->
+		<set-variable variableName="rfcRequest"
+			value="#[payload]" doc:name="Store Request" />
+
+		<set-variable variableName="functionName"
+			value="#[payload.functionName]" doc:name="Store Function Name" />
+
+		<set-variable variableName="startTime" value="#[now()]"
+			doc:name="Store Start Time" />
+
+		<!-- Transform to SAP XML Format - CORRECTED -->
+		<ee:transform doc:name="Transform to SAP Format">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/xml
+---
+{
+  (vars.functionName): 
+    payload.importParameters 
+      default {} 
+      mapObject ((value, key) -> {
+        (key): value
+      })
+    ++
+    (if (!isEmpty(payload.tables))
+      {
+        tables: payload.tables mapObject ((tableRows, tableName) -> {
+          (tableName): {
+            row: tableRows
+          }
+        })
+      }
+    else {})
+    ++
+    (payload.changingParameters 
+      default {} 
+      mapObject ((value, key) -> {
+        (key): value
+      }))
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<!-- Log SAP Payload -->
+		<logger level="DEBUG" doc:name="Log SAP Payload"
+			message="#['SAP Payload:\n' ++ write(payload, 'application/xml', {'indent': true})]" />
+
+		<!-- Execute SAP RFC -->
+		<try doc:name="Try RFC Execution">
+			<sap:synchronous-remote-function-call
+				config-ref="SAP_Connector_Config" key="#[vars.functionName]"
+				doc:name="Execute RFC Function" />
+
+			<!-- Store RFC Response -->
+			<set-variable variableName="sapResponse"
+				value="#[payload]" doc:name="Store SAP Response" />
+
+			<!-- Log SAP Response -->
+			<logger level="DEBUG" doc:name="Log SAP Response"
+				message="#['SAP Response:\n' ++ write(payload, 'application/xml', {'indent': true})]" />
+
+			<!-- Commit if Requested -->
+			<choice doc:name="Check Commit Required">
+				<when expression="#[vars.rfcRequest.commit == true]">
+					<logger level="DEBUG" doc:name="Log Commit Start"
+						message="Committing SAP transaction..." />
+
+					<ee:transform doc:name="Prepare Commit">
+						<ee:message>
+							<ee:set-payload><![CDATA[%dw 2.0
+output application/xml
+---
+{
+  BAPI_TRANSACTION_COMMIT: {
+    WAIT: "X"
+  }
+}]]></ee:set-payload>
+						</ee:message>
+					</ee:transform>
+
+					<sap:synchronous-remote-function-call
+						config-ref="SAP_Connector_Config" key="BAPI_TRANSACTION_COMMIT"
+						doc:name="Commit Transaction" />
+
+					<logger level="DEBUG" doc:name="Log Commit Success"
+						message="Transaction committed successfully" />
+
+					<!-- Restore original SAP response -->
+					<set-payload value="#[vars.sapResponse]"
+						doc:name="Restore SAP Response" />
+				</when>
+			</choice>
+
+			<!-- Calculate Execution Time -->
+			<set-variable variableName="executionTime"
+				value="#[(now() - vars.startTime) as Number {unit: 'milliseconds'}]"
+				doc:name="Calculate Execution Time" />
+
+			<!-- Transform SAP Response to JSON - CORRECTED -->
+			<ee:transform doc:name="Transform to JSON Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var sapData = payload[vars.functionName]
+var exportData = sapData.export
+var tablesData = sapData.tables
+---
+{
+  success: true,
+  functionName: vars.functionName,
+  exportParameters: if (exportData != null) 
+    exportData mapObject ((value, key) -> (key): value)
+  else {},
+  tables: if (tablesData != null)
+    tablesData mapObject ((tableData, tableName) -> 
+      (tableName): if (tableData.row != null)
+        (if (tableData.row is Array) tableData.row else [tableData.row])
+      else []
+    )
+  else {},
+  changingParameters: if (sapData.changing != null)
+    sapData.changing mapObject ((value, key) -> (key): value)
+  else {},
+  executionTimeMs: vars.executionTime as Number,
+  timestamp: now() as String
+}]]></ee:set-payload>
+				</ee:message>
+			</ee:transform>
+
+			<!-- Log Success -->
+			<logger level="INFO" doc:name="Log Success"
+				message="#['RFC Execution Successful - Function: ' ++ vars.functionName ++ ' - Time: ' ++ vars.executionTime ++ ' ms']" />
+
+			<error-handler>
+				<on-error-propagate type="ANY"
+					doc:name="On Error Propagate">
+
+					<!-- Rollback if Commit was Requested -->
+					<choice doc:name="Check Rollback Required">
+						<when expression="#[vars.rfcRequest.commit == true]">
+							<logger level="WARN" doc:name="Log Rollback Start"
+								message="Error occurred - rolling back transaction..." />
+
+							<try doc:name="Try Rollback">
+								<ee:transform doc:name="Prepare Rollback">
+									<ee:message>
+										<ee:set-payload><![CDATA[%dw 2.0
+output application/xml
+---
+{
+  BAPI_TRANSACTION_ROLLBACK: {}
+}]]></ee:set-payload>
+									</ee:message>
+								</ee:transform>
+
+								<sap:synchronous-remote-function-call
+									config-ref="SAP_Connector_Config"
+									key="BAPI_TRANSACTION_ROLLBACK" doc:name="Rollback Transaction" />
+
+								<logger level="WARN" doc:name="Log Rollback Success"
+									message="Transaction rolled back successfully" />
+
+								<error-handler>
+									<on-error-continue type="ANY">
+										<logger level="ERROR" doc:name="Log Rollback Failure"
+											message="#['Rollback failed: ' ++ error.description]" />
+									</on-error-continue>
+								</error-handler>
+							</try>
+						</when>
+					</choice>
+
+					<!-- Log Error -->
+					<logger level="ERROR" doc:name="Log Error"
+						message="#['RFC Execution Failed - Function: ' ++ vars.functionName ++ ' - Error: ' ++ error.description]" />
+
+				</on-error-propagate>
+			</error-handler>
+		</try>
+
+	</flow>
+
+	<!-- Get RFC Metadata Flow - CORRECTED -->
+	<flow name="get-rfc-metadata-flow"
+		doc:name="Get RFC Metadata Flow">
+
+		<http:listener config-ref="HTTP_Listener_Config"
+			path="/api/sap/rfc/metadata/{functionName}"
+			doc:name="HTTP GET /metadata" allowedMethods="GET" />
+
+		<set-variable variableName="functionName"
+			value="#[attributes.uriParams.functionName]"
+			doc:name="Extract Function Name" />
+
+		<logger level="INFO" doc:name="Log Metadata Request"
+			message="#['Retrieving metadata for function: ' ++ vars.functionName]" />
+
+		<!-- Get Function Template -->
+		<sap:get-function config-ref="SAP_Connector_Config"
+			key="#[vars.functionName]" doc:name="Get Function Template" />
+
+		<!-- Store XML Template -->
+		<set-variable variableName="xmlTemplate"
+			value="#[write(payload, 'application/xml', {'indent': true})]"
+			doc:name="Store XML Template" />
+
+		<!-- Transform to Metadata JSON - CORRECTED -->
+		<ee:transform doc:name="Transform to Metadata JSON">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var functionData = payload[vars.functionName]
+var inputParams = functionData.INPUT
+var outputParams = functionData.OUTPUT
+var tableParams = functionData.TABLES
+---
+{
+  functionName: vars.functionName,
+  structure: {
+    importParameters: if (inputParams != null) 
+      (inputParams pluck ((value, key) -> {
+        name: key as String,
+        sample: value
+      }))
+    else [],
+    exportParameters: if (outputParams != null)
+      (outputParams pluck ((value, key) -> {
+        name: key as String,
+        sample: value
+      }))
+    else [],
+    tableParameters: if (tableParams != null)
+      (tableParams pluck ((value, key) -> {
+        name: key as String,
+        structure: value
+      }))
+    else []
+  },
+  xmlTemplate: vars.xmlTemplate,
+  timestamp: now() as String
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+		<logger level="INFO" doc:name="Log Success"
+			message="#['Metadata retrieved successfully for: ' ++ vars.functionName]" />
+
+	</flow>
+
+	<!-- Health Check Flow -->
+	<flow name="health-check-flow" doc:name="Health Check Flow">
+
+		<http:listener config-ref="HTTP_Listener_Config"
+			path="/api/sap/health" doc:name="HTTP GET /health"
+			allowedMethods="GET" />
+
+		<ee:transform doc:name="Health Response">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  status: "UP",
+  service: "MuleSoft Generic SAP RFC Executor",
+  version: "2.0.0",
+  sapConnector: "Connected",
+  timestamp: now() as String
+}]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+
+	</flow>
+
+</mule>

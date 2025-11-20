@@ -1,0 +1,23 @@
+# HTTP Configuration
+http:
+  host: "0.0.0.0"
+  port: "8081"
+
+# SAP Connection Configuration
+sap:
+  host: "your-sap-server.company.com"
+  sysnr: "00"
+  client: "800"
+  user: "YOUR_SAP_USER"
+  password: "YOUR_SAP_PASSWORD"
+  language: "EN"
+  destination: "MULE_SAP_RFC_EXECUTOR"
+  
+  # Connection Pool Settings
+  pool:
+    capacity: "10"
+    peakLimit: "100"
+  
+  # Trace Settings
+  trace:
+    enabled: "false"

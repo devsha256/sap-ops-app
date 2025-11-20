@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns="http://www.mulesoft.org/schema/mule/core"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:sap="http://www.mulesoft.org/schema/mule/sap"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+	xmlns:secure-properties="http://www.mulesoft.org/schema/mule/secure-properties"
+	xsi:schemaLocation="
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd 
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/sap http://www.mulesoft.org/schema/mule/sap/current/mule-sap.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/secure-properties http://www.mulesoft.org/schema/mule/secure-properties/current/mule-secure-properties.xsd">
+
+	<!-- Configuration Properties -->
+	<configuration-properties
+		file="properties/${mule.env}.yaml" doc:name="Configuration Properties" />
+
+	<!-- HTTP Listener Configuration -->
+	<http:listener-config name="HTTP_Listener_Config"
+		doc:name="HTTP Listener config">
+		<http:listener-connection host="${http.host}"
+			port="${http.port}" />
+	</http:listener-config>
+
+	<!-- SAP Connector Configuration -->
+	<sap:config name="SAP_Connector_Config"
+		doc:name="SAP Connector Config">
+		<sap:simple-connection-provider>
+			<sap:connection asHost="${sap.host}"
+				sysnr="${sap.sysnr}" client="${sap.client}" user="${sap.user}"
+				password="${sap.password}" lang="${sap.language}"
+				destinationName="${sap.destination}">
+				<sap:extended-properties>
+					<sap:extended-property
+						key="jco.client.pool_capacity" value="${sap.pool.capacity}" />
+					<sap:extended-property
+						key="jco.client.peak_limit" value="${sap.pool.peakLimit}" />
+					<sap:extended-property key="jco.client.trace"
+						value="${sap.trace.enabled}" />
+				</sap:extended-properties>
+			</sap:connection>
+		</sap:simple-connection-provider>
+	</sap:config>
+
+	<!-- Global Error Handler -->
+	<error-handler name="Global_Error_Handler"
+		doc:name="Global Error Handler">
+		<on-error-propagate type="SAP:CONNECTIVITY"
+			doc:name="SAP Connectivity Error">
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: "SAP Connectivity Error",
+  message: error.description,
+  errorType: error.errorType.identifier,
+  timestamp: now()
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[503]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<on-error-propagate type="SAP:INVALID_INPUT"
+			doc:name="SAP Invalid Input">
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: "Invalid Input",
+  message: error.description,
+  errorType: error.errorType.identifier,
+  timestamp: now()
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[400]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+
+		<on-error-propagate type="ANY"
+			doc:name="General Error">
+			<ee:transform doc:name="Transform Error Response">
+				<ee:message>
+					<ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  success: false,
+  error: "Internal Server Error",
+  message: error.description default "An unexpected error occurred",
+  errorType: error.errorType.identifier,
+  timestamp: now()
+}]]></ee:set-payload>
+				</ee:message>
+				<ee:variables>
+					<ee:set-variable variableName="httpStatus"><![CDATA[500]]></ee:set-variable>
+				</ee:variables>
+			</ee:transform>
+		</on-error-propagate>
+	</error-handler>
+
+</mule>
