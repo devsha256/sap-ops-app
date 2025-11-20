@@ -1,29 +1,19 @@
 sap-rfc-test/
-├── pom.xml
-├── README.md
-├── .gitignore
-├── lib/
-│   ├── sapjco3.jar
-│   └── sapjco3.dll (or .so for Linux)
-└── src/
-    └── main/
-        ├── java/
-        │   └── io/
-        │       └── github/
-        │           └── devsha256/
-        │               └── saprfctest/
-        │                   ├── SapRfcTestApplication.java
-        │                   ├── config/
-        │                   │   └── SapJCoConfig.java
-        │                   ├── service/
-        │                   │   └── TransferEligibilityService.java
-        │                   ├── controller/
-        │                   │   └── TransferEligibilityController.java
-        │                   ├── model/
-        │                   │   ├── TransferRequest.java
-        │                   │   └── TransferResponse.java
-        │                   └── exception/
-        │                       └── SapRfcException.java
-        └── resources/
-            ├── application.properties
-            └── application-prod.properties
+├── src/main/java/io/github/devsha256/saprfctest/
+│   ├── SapRfcTestApplication.java
+│   ├── config/
+│   │   └── SapJCoConfig.java
+│   ├── model/
+│   │   ├── RfcRequest.java              [NEW - Generic]
+│   │   ├── RfcResponse.java             [NEW - Generic]
+│   │   ├── RfcParameter.java            [NEW]
+│   │   ├── RfcTable.java                [NEW]
+│   │   └── RfcTableRow.java             [NEW]
+│   ├── service/
+│   │   ├── GenericRfcService.java       [NEW - Main service]
+│   │   └── RfcMetadataService.java      [NEW - Metadata]
+│   ├── controller/
+│   │   ├── GenericRfcController.java    [NEW]
+│   │   └── RfcMetadataController.java   [NEW]
+│   └── exception/
+│       └── SapRfcException.java
