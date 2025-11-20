@@ -75,10 +75,15 @@ public class GenericRfcService {
             // Extract changing parameters
             Map<String, Object> changingParams = extractChangingParameters(function);
             
-            // Commit if requested
+            // Commit if requested - NOW PROPERLY HANDLED
             if (request.isCommit()) {
-                commitTransaction();
-                logger.debug("Transaction committed");
+                try {
+                    commitTransaction();
+                    logger.debug("Transaction committed successfully");
+                } catch (JCoException e) {
+                    logger.error("Failed to commit transaction: {}", e.getMessage());
+                    throw new SapRfcException("Transaction commit failed: " + e.getMessage(), e);
+                }
             }
             
             // End stateful context
@@ -101,6 +106,16 @@ public class GenericRfcService {
             logger.error("SAP RFC Error: {}", e.getMessage(), e);
             response.setSuccess(false);
             response.setError(e.getMessage());
+            
+            // Rollback on error
+            try {
+                if (request.isCommit()) {
+                    rollbackTransaction();
+                    logger.debug("Transaction rolled back");
+                }
+            } catch (Exception rollbackError) {
+                logger.error("Rollback failed: {}", rollbackError.getMessage());
+            }
             
             // End context on error
             if (request.isStateful() && JCoContext.isStateful(destination)) {
@@ -134,6 +149,9 @@ public class GenericRfcService {
             try {
                 if (paramValue == null) {
                     importParams.setValue(paramName, "");
+                } else if (paramValue instanceof Map) {
+                    // Handle structure parameters
+                    setStructureParameter(importParams, paramName, (Map<String, Object>) paramValue);
                 } else {
                     importParams.setValue(paramName, paramValue.toString());
                 }
@@ -141,6 +159,21 @@ public class GenericRfcService {
             } catch (Exception e) {
                 logger.warn("Could not set parameter {}: {}", paramName, e.getMessage());
             }
+        }
+    }
+    
+    /**
+     * Set structure parameter (nested fields)
+     */
+    private void setStructureParameter(JCoParameterList paramList, String structureName, Map<String, Object> fields) {
+        try {
+            JCoStructure structure = paramList.getStructure(structureName);
+            
+            for (Map.Entry<String, Object> field : fields.entrySet()) {
+                structure.setValue(field.getKey(), field.getValue());
+            }
+        } catch (Exception e) {
+            logger.warn("Could not set structure {}: {}", structureName, e.getMessage());
         }
     }
     
@@ -220,6 +253,26 @@ public class GenericRfcService {
         JCoParameterFieldIterator it = exportParams.getParameterFieldIterator();
         while (it.hasNextField()) {
             JCoParameterField field = it.nextParameterField();
+            
+            // Handle structures
+            if (field.isStructure()) {
+                result.put(field.getName(), extractStructure(field.getStructure()));
+            } else {
+                result.put(field.getName(), field.getValue());
+            }
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Extract structure fields
+     */
+    private Map<String, Object> extractStructure(JCoStructure structure) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        
+        for (JCoFieldIterator it = structure.getFieldIterator(); it.hasNextField(); ) {
+            JCoField field = it.nextField();
             result.put(field.getName(), field.getValue());
         }
         
@@ -285,14 +338,35 @@ public class GenericRfcService {
     }
     
     /**
-     * Commit transaction
+     * Commit transaction - FIXED: properly declares JCoException
      */
     private void commitTransaction() throws JCoException {
+        logger.debug("Committing SAP transaction...");
+        
         JCoFunction commitFunction = destination.getRepository().getFunction("BAPI_TRANSACTION_COMMIT");
         
         if (commitFunction != null) {
             commitFunction.getImportParameterList().setValue("WAIT", "X");
             commitFunction.execute(destination);
+            logger.debug("BAPI_TRANSACTION_COMMIT executed successfully");
+        } else {
+            logger.warn("BAPI_TRANSACTION_COMMIT function not found");
+        }
+    }
+    
+    /**
+     * Rollback transaction
+     */
+    private void rollbackTransaction() throws JCoException {
+        logger.debug("Rolling back SAP transaction...");
+        
+        JCoFunction rollbackFunction = destination.getRepository().getFunction("BAPI_TRANSACTION_ROLLBACK");
+        
+        if (rollbackFunction != null) {
+            rollbackFunction.execute(destination);
+            logger.debug("BAPI_TRANSACTION_ROLLBACK executed successfully");
+        } else {
+            logger.warn("BAPI_TRANSACTION_ROLLBACK function not found");
         }
     }
 }
