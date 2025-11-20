@@ -75,14 +75,14 @@ public class GenericRfcService {
             // Extract changing parameters
             Map<String, Object> changingParams = extractChangingParameters(function);
             
-            // Commit if requested - NOW PROPERLY HANDLED
+            // Commit if requested
             if (request.isCommit()) {
                 try {
                     commitTransaction();
                     logger.debug("Transaction committed successfully");
-                } catch (JCoException e) {
-                    logger.error("Failed to commit transaction: {}", e.getMessage());
-                    throw new SapRfcException("Transaction commit failed: " + e.getMessage(), e);
+                } catch (JCoException commitEx) {
+                    logger.error("Failed to commit transaction: {}", commitEx.getMessage());
+                    throw new SapRfcException("Transaction commit failed: " + commitEx.getMessage(), commitEx);
                 }
             }
             
@@ -107,19 +107,24 @@ public class GenericRfcService {
             response.setSuccess(false);
             response.setError(e.getMessage());
             
-            // Rollback on error
-            try {
-                if (request.isCommit()) {
+            // Rollback on error - FIXED: properly wrapped
+            if (request.isCommit()) {
+                try {
                     rollbackTransaction();
-                    logger.debug("Transaction rolled back");
+                    logger.debug("Transaction rolled back successfully");
+                } catch (JCoException rollbackEx) {
+                    logger.error("Rollback failed: {}", rollbackEx.getMessage());
+                    // Don't throw here, we're already in error handling
                 }
-            } catch (Exception rollbackError) {
-                logger.error("Rollback failed: {}", rollbackError.getMessage());
             }
             
             // End context on error
             if (request.isStateful() && JCoContext.isStateful(destination)) {
-                JCoContext.end(destination);
+                try {
+                    JCoContext.end(destination);
+                } catch (Exception contextEx) {
+                    logger.error("Failed to end context: {}", contextEx.getMessage());
+                }
             }
             
             throw new SapRfcException("Error executing RFC: " + e.getMessage(), e);
@@ -338,7 +343,7 @@ public class GenericRfcService {
     }
     
     /**
-     * Commit transaction - FIXED: properly declares JCoException
+     * Commit transaction
      */
     private void commitTransaction() throws JCoException {
         logger.debug("Committing SAP transaction...");
