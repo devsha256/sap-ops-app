@@ -259,8 +259,10 @@ public class GenericRfcService {
         while (it.hasNextField()) {
             JCoParameterField field = it.nextParameterField();
             
-            // Handle structures
-            if (field.isStructure()) {
+            // Handle tables and structures
+            if (field.isTable()) {
+                result.put(field.getName(), extractTableAsList(field.getTable()));
+            } else if (field.isStructure()) {
                 result.put(field.getName(), extractStructure(field.getStructure()));
             } else {
                 result.put(field.getName(), field.getValue());
@@ -285,6 +287,26 @@ public class GenericRfcService {
     }
     
     /**
+     * Helper to extract JCoTable to Java List
+     */
+    private List<Map<String, Object>> extractTableAsList(JCoTable table) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (table == null) return rows;
+        
+        for (int i = 0; i < table.getNumRows(); i++) {
+            table.setRow(i);
+            Map<String, Object> row = new LinkedHashMap<>();
+            
+            for (JCoFieldIterator fieldIt = table.getFieldIterator(); fieldIt.hasNextField(); ) {
+                JCoField rowField = fieldIt.nextField();
+                row.put(rowField.getName(), rowField.getValue());
+            }
+            rows.add(row);
+        }
+        return rows;
+    }
+
+    /**
      * Extract table parameters
      */
     private Map<String, List<Map<String, Object>>> extractTableParameters(JCoFunction function) {
@@ -300,22 +322,7 @@ public class GenericRfcService {
             JCoParameterField field = it.nextParameterField();
             
             if (field.isTable()) {
-                JCoTable table = field.getTable();
-                List<Map<String, Object>> rows = new ArrayList<>();
-                
-                for (int i = 0; i < table.getNumRows(); i++) {
-                    table.setRow(i);
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    
-                    for (JCoFieldIterator fieldIt = table.getFieldIterator(); fieldIt.hasNextField(); ) {
-                        JCoField rowField = fieldIt.nextField();
-                        row.put(rowField.getName(), rowField.getValue());
-                    }
-                    
-                    rows.add(row);
-                }
-                
-                result.put(field.getName(), rows);
+                result.put(field.getName(), extractTableAsList(field.getTable()));
             }
         }
         
@@ -336,7 +343,14 @@ public class GenericRfcService {
         JCoParameterFieldIterator it = changingParams.getParameterFieldIterator();
         while (it.hasNextField()) {
             JCoParameterField field = it.nextParameterField();
-            result.put(field.getName(), field.getValue());
+            
+            if (field.isTable()) {
+                result.put(field.getName(), extractTableAsList(field.getTable()));
+            } else if (field.isStructure()) {
+                result.put(field.getName(), extractStructure(field.getStructure()));
+            } else {
+                result.put(field.getName(), field.getValue());
+            }
         }
         
         return result;

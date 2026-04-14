@@ -1,0 +1,11 @@
+{
+  "modelVersion": "1.0.0",
+  "name": "MuleSoft SAP Generic RFC Executor",
+  "description": "Generic SAP RFC executor supporting any function dynamically",
+  "version": "1.0.0-SNAPSHOT",
+  "source": "file:///Users/winterfell/visual-studio-code/github-devsha256/sap-ops-app/pom.xml",
+  "natures": [
+    "mule"
+  ],
+  "components": []
+}
